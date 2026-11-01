@@ -34,6 +34,8 @@ export async function getRealtime(): Promise<RealtimeSnapshot> {
       if (live) return live;
     } catch (err) {
       console.error("[ga4] realtime failed", err);
+      // Never mix demo numbers into a live deployment
+      return { source: "ga4", activeNow: 0, perMinute: Array.from({ length: 30 }, (_, i) => ({ minute: 29 - i, users: 0 })), activePages: [], countries: [], events: [] };
     }
   }
   return getDemoRealtime();

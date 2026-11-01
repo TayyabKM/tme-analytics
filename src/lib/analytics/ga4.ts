@@ -16,6 +16,9 @@ import { RANGE_DAYS } from "./demo";
 type Row = { d: string[]; m: number[] };
 type Range = { startDate: string; endDate: string };
 
+/** Page title of this dashboard itself (its own GA tag must not count as a viewer) */
+const OWN_TITLE = "TME Insights";
+
 let client: BetaAnalyticsDataClient | null = null;
 
 export function ga4Configured() {
@@ -161,8 +164,20 @@ export async function getGa4Snapshot(range: RangeKey, dashboardId = "all"): Prom
     })
     .sort((a, b) => b.users - a.users);
 
-  const pages = pagesNow
-    .map((r) => ({ dashboard: dashboardFor(r.d[0])?.name ?? "—", page: r.d[1] || "(untitled)", views: r.m[1], avgTimeSec: r.m[0] ? r.m[2] / r.m[0] : 0, exitRate: 0 }))
+  const pageMap = new Map<string, { dashboard: string; page: string; users: number; views: number; time: number }>();
+  for (const r of pagesNow) {
+    const dashboard = dashboardFor(r.d[0])?.name ?? "—";
+    const page = r.d[1] || "(untitled)";
+    const key = `${dashboard}|${page}`;
+    const e = pageMap.get(key) ?? { dashboard, page, users: 0, views: 0, time: 0 };
+    e.users += r.m[0];
+    e.views += r.m[1];
+    e.time += r.m[2];
+    pageMap.set(key, e);
+  }
+  const pages = [...pageMap.values()]
+    .filter((e) => e.views > 0)
+    .map((e) => ({ dashboard: e.dashboard, page: e.page, views: e.views, avgTimeSec: e.users ? e.time / e.users : 0, exitRate: 0 }))
     .sort((a, b) => b.views - a.views)
     .slice(0, 8);
 
@@ -237,11 +252,18 @@ export async function getGa4Realtime(): Promise<RealtimeSnapshot | null> {
   const runRt = async (dims: string[], minuteRanges?: { startMinutesAgo: number; endMinutesAgo: number }[]) => {
     const parts = await Promise.all(
       [...byProperty.keys()].map(async (p) => {
+        // Realtime reports expose the page title but not the URL, so leave out this
+        // dashboard's own visits ("TME Insights") instead of matching report IDs.
         const [res] = await c.runRealtimeReport({
           property: `properties/${p}`,
           dimensions: dims.map((name) => ({ name })),
           metrics: [{ name: "activeUsers" }],
           minuteRanges,
+          dimensionFilter: {
+            notExpression: {
+              filter: { fieldName: "unifiedScreenName", stringFilter: { matchType: "BEGINS_WITH" as const, value: OWN_TITLE } },
+            },
+          },
         });
         return (res.rows ?? []).map((r) => ({ d: (r.dimensionValues ?? []).map((v) => v.value ?? ""), m: [Number(r.metricValues?.[0]?.value ?? 0)] }));
       }),
